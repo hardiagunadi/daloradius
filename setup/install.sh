@@ -241,6 +241,11 @@ freeradius_install() {
 # Function to set up freeRADIUS SQL module
 freeradius_setup_sql_mod() {
     echo -n "[+] Setting up freeRADIUS SQL module... "
+    if [ ! -f "${FREERADIUS_SQL_MOD_PATH}" ]; then
+        print_red "KO"
+        echo "[!] freeRADIUS SQL module file not found at ${FREERADIUS_SQL_MOD_PATH}. Aborting." >&2
+        exit 1
+    fi
     if ! sed -Ei '/^[\t\s#]*tls\s+\{/, /[\t\s#]*\}/ s/^/#/' "${FREERADIUS_SQL_MOD_PATH}" >/dev/null 2>&1 || \
        ! sed -Ei 's/^[\t\s#]*dialect\s+=\s+.*$/\tdialect = "mysql"/g' "${FREERADIUS_SQL_MOD_PATH}" >/dev/null 2>&1 || \
        ! sed -Ei 's/^[\t\s#]*driver\s+=\s+"rlm_sql_null"/\tdriver = "rlm_sql_\${dialect}"/g' "${FREERADIUS_SQL_MOD_PATH}" >/dev/null 2>&1 || \
@@ -250,11 +255,20 @@ freeradius_setup_sql_mod() {
        ! sed -Ei "s/^[\t\s#]*password\s+=\s+\"radpass\"/\tpassword = \"${DB_PASS}\"/g" "${FREERADIUS_SQL_MOD_PATH}" >/dev/null 2>&1 || \
        ! sed -Ei "s/^[\t\s#]*radius_db\s+=\s+\"radius\"/\tradius_db = \"${DB_SCHEMA}\"/g" "${FREERADIUS_SQL_MOD_PATH}" >/dev/null 2>&1 || \
        ! sed -Ei 's/^[\t\s#]*read_clients\s+=\s+.*$/\tread_clients = yes/g' "${FREERADIUS_SQL_MOD_PATH}" >/dev/null 2>&1 || \
-       ! sed -Ei 's/^[\t\s#]*client_table\s+=\s+.*$/\tclient_table = "nas"/g' "${FREERADIUS_SQL_MOD_PATH}" >/dev/null 2>&1 || \
-       ! ln -s "${FREERADIUS_SQL_MOD_PATH}" "${FREERADIUS_DIR}/mods-enabled/" >/dev/null 2>&1; then
+       ! sed -Ei 's/^[\t\s#]*client_table\s+=\s+.*$/\tclient_table = "nas"/g' "${FREERADIUS_SQL_MOD_PATH}" >/dev/null 2>&1; then
         print_red "KO"
-        echo "[!] Failed to set up freeRADIUS SQL module. Aborting." >&2
+        echo "[!] Failed to update freeRADIUS SQL module config. Aborting." >&2
         exit 1
+    fi
+
+    if [ -L "${FREERADIUS_DIR}/mods-enabled/sql" ]; then
+        print_yellow "[!] freeRADIUS SQL module already enabled. Skipping symlink."
+    else
+        if ! ln -s "${FREERADIUS_SQL_MOD_PATH}" "${FREERADIUS_DIR}/mods-enabled/" >/dev/null 2>&1; then
+            print_red "KO"
+            echo "[!] Failed to enable freeRADIUS SQL module. Aborting." >&2
+            exit 1
+        fi
     fi
     print_green "OK"
 }
