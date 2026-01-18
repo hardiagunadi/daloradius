@@ -647,4 +647,4 @@
     echo '})();';
     echo '</script>';
 
-    print_html_epilogue();
+    print_footer_and_html_epilogue();
