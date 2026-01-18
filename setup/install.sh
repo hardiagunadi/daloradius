@@ -474,6 +474,10 @@ EOF
 # Function to set up Apache site for operators
 apache_setup_operators_site() {
     echo -n "[+] Setting up Apache site for operators... "
+    if [ -e /etc/apache2/sites-available/operators.conf ]; then
+        a2dissite operators.conf >/dev/null 2>&1 || true
+        rm -f /etc/apache2/sites-available/operators.conf >/dev/null 2>&1 || true
+    fi
     
     if [ -n "${DALORADIUS_OPERATORS_DOMAIN}" ]; then
         cat <<EOF > /etc/apache2/sites-available/operators.conf
@@ -535,6 +539,10 @@ EOF
 # Function to set up Apache site for users
 apache_setup_users_site() {
     echo -n "[+] Setting up Apache site for users... "
+    if [ -e /etc/apache2/sites-available/users.conf ]; then
+        a2dissite users.conf >/dev/null 2>&1 || true
+        rm -f /etc/apache2/sites-available/users.conf >/dev/null 2>&1 || true
+    fi
 
     if [ -n "${DALORADIUS_USERS_DOMAIN}" ]; then
         cat <<EOF > /etc/apache2/sites-available/users.conf
@@ -611,10 +619,18 @@ apache_enable_ssl() {
     fi
 
     echo -n "[+] Installing Certbot and enabling SSL... "
-    if ! apt --no-install-recommends install certbot python3-certbot-apache -y >/dev/null 2>&1 & print_spinner $!; then
-        print_red "KO"
-        print_red "[!] Failed to install Certbot. Aborting." >&2
-        exit 1
+    if dpkg -s certbot >/dev/null 2>&1 && dpkg -s python3-certbot-apache >/dev/null 2>&1; then
+        print_yellow "[!] Certbot already installed. Skipping install."
+    else
+        apt --no-install-recommends install certbot python3-certbot-apache -y >/dev/null 2>&1 &
+        apt_pid=$!
+        print_spinner $apt_pid
+        wait $apt_pid
+        if [ $? -ne 0 ]; then
+            print_red "KO"
+            print_red "[!] Failed to install Certbot. Aborting." >&2
+            exit 1
+        fi
     fi
 
     if ! a2enmod ssl rewrite >/dev/null 2>&1; then
@@ -629,7 +645,7 @@ apache_enable_ssl() {
         exit 1
     fi
 
-    if ! certbot --apache --non-interactive --agree-tos --redirect \
+    if ! certbot --apache --non-interactive --agree-tos --redirect --force-renewal \
         -m "${LETSENCRYPT_EMAIL}" -d "${DALORADIUS_OPERATORS_DOMAIN}" -d "${DALORADIUS_USERS_DOMAIN}" >/dev/null 2>&1; then
         print_red "KO"
         print_red "[!] Failed to obtain SSL certificate. Aborting." >&2
