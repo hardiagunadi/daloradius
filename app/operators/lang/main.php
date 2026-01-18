@@ -45,8 +45,8 @@ global $l;
 
 $l = array();
 
-// Load default language: English
-$langDefault = 'en';
+// Load default language: Indonesian
+$langDefault = 'id';
 
 $langFile = __DIR__ . '/' . $langDefault . '.php';
 
