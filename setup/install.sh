@@ -170,6 +170,11 @@ system_update() {
 
 # Function to install MariaDB
 mariadb_install() {
+    if dpkg -s mariadb-server >/dev/null 2>&1; then
+        print_yellow "[!] MariaDB already installed. Skipping."
+        return
+    fi
+
     echo -n "[+] Installing MariaDB... "
     apt --no-install-recommends install mariadb-server mariadb-client -y >/dev/null 2>&1 & print_spinner $!
     if [ $? -ne 0 ]; then
@@ -218,6 +223,11 @@ SQL
 
 # Function to install freeRADIUS
 freeradius_install() {
+    if dpkg -s freeradius >/dev/null 2>&1; then
+        print_yellow "[!] freeRADIUS already installed. Skipping."
+        return
+    fi
+
     echo -n "[+] Installing freeRADIUS... "
     apt --no-install-recommends install freeradius freeradius-common freeradius-mysql -y >/dev/null 2>&1 & print_spinner $!
     if [ $? -ne 0 ]; then
