@@ -133,6 +133,7 @@ INSERT IGNORE INTO operators_acl (`operator_id`, `file`, `access`) VALUES
     (1, 'hotspot_list', 1),
     (1, 'config_mikrotik', 1),
     (1, 'config_wa_gateway', 1),
+    (1, 'config_l2tp', 1),
     (1, 'config_db_update', 1),
     (1, 'bill_invoice_pay', 1);
 
@@ -143,5 +144,6 @@ INSERT IGNORE INTO operators_acl_files (`file`, `category`, `section`) VALUES
     ('hotspot_list', 'Management', 'Users'),
     ('config_mikrotik', 'Configuration', 'NAS'),
     ('config_wa_gateway', 'Configuration', 'Integrations'),
+    ('config_l2tp', 'Configuration', 'Integrations'),
     ('config_db_update', 'Configuration', 'Maintenance'),
     ('bill_invoice_pay', 'Billing', 'Invoice');

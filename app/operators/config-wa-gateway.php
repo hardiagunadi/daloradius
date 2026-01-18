@@ -160,4 +160,4 @@
     close_fieldset();
     close_form();
 
-    print_html_epilogue();
+    print_footer_and_html_epilogue();
