@@ -686,7 +686,6 @@ system_finalize() {
 main() {
     system_ensure_root
     system_update
-    prompt_domains
 
     mariadb_install
     mariadb_secure
@@ -710,10 +709,16 @@ main() {
     apache_setup_operators_site
     apache_setup_users_site
     apache_enable_restart
-    apache_enable_ssl
 
     system_finalize
     mariadb_clean_conf
+
+    prompt_domains
+    apache_setup_ports
+    apache_setup_operators_site
+    apache_setup_users_site
+    apache_enable_restart
+    apache_enable_ssl
 }
 
 # Parsing command line options
