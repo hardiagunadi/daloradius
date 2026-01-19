@@ -59,6 +59,12 @@
     $values = $defaults;
     $server_script = "";
     $client_script = "";
+    $installer_script = "";
+    $installer_path = "";
+    $packages_script = "";
+    $packages_path = "";
+    $apply_output = array();
+    $apply_exit = null;
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (array_key_exists('csrf_token', $_POST) && isset($_POST['csrf_token']) && dalo_check_csrf_token($_POST['csrf_token'])) {
@@ -104,15 +110,79 @@
                     }
 
                     $pool_range = $pool_base . '2-' . $pool_base . '254';
-                    $profile_name = 'l2tp-tmdradius';
                     $server_lines = array(
-                        "/ip pool add name=$profile_name ranges=$pool_range",
-                        "/ppp profile add name=$profile_name local-address=" . $values['local_address']
-                            . " remote-address=$profile_name use-encryption=yes",
-                        "/ppp secret add name=\"" . mikrotik_escape($values['l2tp_username']) . "\" password=\""
-                            . mikrotik_escape($values['l2tp_password']) . "\" service=l2tp profile=$profile_name",
-                        "/interface l2tp-server server set enabled=yes default-profile=$profile_name use-ipsec=yes ipsec-secret=\""
-                            . mikrotik_escape($values['ipsec_secret']) . "\" authentication=mschap2",
+                        "# Linux L2TP/IPsec server (xl2tpd + strongSwan)",
+                        "# Install: apt install -y strongswan xl2tpd ppp freeradius-utils",
+                        "",
+                        "# /etc/ipsec.conf",
+                        "config setup",
+                        "    uniqueids=no",
+                        "",
+                        "conn l2tp-psk",
+                        "    keyexchange=ikev1",
+                        "    authby=psk",
+                        "    type=transport",
+                        "    left=" . $values['server_host'],
+                        "    leftprotoport=17/1701",
+                        "    right=%any",
+                        "    rightprotoport=17/%any",
+                        "    auto=add",
+                        "",
+                        "# /etc/ipsec.secrets",
+                        $values['server_host'] . " %any : PSK \"" . $values['ipsec_secret'] . "\"",
+                        "",
+                        "# /etc/xl2tpd/xl2tpd.conf",
+                        "[global]",
+                        "port = 1701",
+                        "",
+                        "[lns default]",
+                        "ip range = " . $pool_range,
+                        "local ip = " . $values['local_address'],
+                        "require chap = yes",
+                        "refuse pap = yes",
+                        "require authentication = yes",
+                        "name = l2tpd",
+                        "pppoptfile = /etc/ppp/options.xl2tpd",
+                        "length bit = yes",
+                        "",
+                        "# /etc/ppp/options.xl2tpd",
+                        "require-mschap-v2",
+                        "refuse-pap",
+                        "refuse-chap",
+                        "refuse-mschap",
+                        "ms-dns 8.8.8.8",
+                        "ms-dns 1.1.1.1",
+                        "mtu 1410",
+                        "mru 1410",
+                        "lock",
+                        "auth",
+                        "proxyarp",
+                        "lcp-echo-interval 30",
+                        "lcp-echo-failure 4",
+                        "plugin radius.so",
+                        "radius-config-file /etc/ppp/radius/radius.conf",
+                        "",
+                        "# /etc/ppp/radius/servers",
+                        $values['radius_server'] . " " . $values['radius_secret'],
+                        "",
+                        "# /etc/ppp/radius/radius.conf",
+                        "authserver " . $values['radius_server'],
+                        "acctserver " . $values['radius_server'],
+                        "radius_timeout 10",
+                        "radius_retries 3",
+                        "",
+                        "# Enable forwarding",
+                        "sysctl -w net.ipv4.ip_forward=1",
+                        "",
+                        "# Open firewall (adjust to your firewall tool)",
+                        "ufw allow 500/udp",
+                        "ufw allow 4500/udp",
+                        "ufw allow 1701/udp",
+                        "ufw allow " . $values['radius_auth_port'] . "/udp",
+                        "ufw allow " . $values['radius_acct_port'] . "/udp",
+                        "",
+                        "# Restart services",
+                        "systemctl restart strongswan-starter xl2tpd",
                     );
 
                     $client_lines = array(
@@ -134,6 +204,117 @@
                     $client_script = implode("\n", $client_lines);
                     $successMsg = "Script VPN L2TP berhasil dibuat.";
                     $logAction .= "Generated L2TP scripts on page: ";
+
+                    $installer_lines = array(
+                        "#!/usr/bin/env bash",
+                        "set -euo pipefail",
+                        "",
+                        "install -d -m 0755 /etc/ppp/radius",
+                        "",
+                        "cat > /etc/ipsec.conf <<'EOF'",
+                        "config setup",
+                        "    uniqueids=no",
+                        "",
+                        "conn l2tp-psk",
+                        "    keyexchange=ikev1",
+                        "    authby=psk",
+                        "    type=transport",
+                        "    left=" . $values['server_host'],
+                        "    leftprotoport=17/1701",
+                        "    right=%any",
+                        "    rightprotoport=17/%any",
+                        "    auto=add",
+                        "EOF",
+                        "",
+                        "cat > /etc/ipsec.secrets <<'EOF'",
+                        $values['server_host'] . " %any : PSK \"" . $values['ipsec_secret'] . "\"",
+                        "EOF",
+                        "",
+                        "cat > /etc/xl2tpd/xl2tpd.conf <<'EOF'",
+                        "[global]",
+                        "port = 1701",
+                        "",
+                        "[lns default]",
+                        "ip range = " . $pool_range,
+                        "local ip = " . $values['local_address'],
+                        "require chap = yes",
+                        "refuse pap = yes",
+                        "require authentication = yes",
+                        "name = l2tpd",
+                        "pppoptfile = /etc/ppp/options.xl2tpd",
+                        "length bit = yes",
+                        "EOF",
+                        "",
+                        "cat > /etc/ppp/options.xl2tpd <<'EOF'",
+                        "require-mschap-v2",
+                        "refuse-pap",
+                        "refuse-chap",
+                        "refuse-mschap",
+                        "ms-dns 8.8.8.8",
+                        "ms-dns 1.1.1.1",
+                        "mtu 1410",
+                        "mru 1410",
+                        "lock",
+                        "auth",
+                        "proxyarp",
+                        "lcp-echo-interval 30",
+                        "lcp-echo-failure 4",
+                        "plugin radius.so",
+                        "radius-config-file /etc/ppp/radius/radius.conf",
+                        "EOF",
+                        "",
+                        "cat > /etc/ppp/radius/servers <<'EOF'",
+                        $values['radius_server'] . " " . $values['radius_secret'],
+                        "EOF",
+                        "",
+                        "cat > /etc/ppp/radius/radius.conf <<'EOF'",
+                        "authserver " . $values['radius_server'],
+                        "acctserver " . $values['radius_server'],
+                        "radius_timeout 10",
+                        "radius_retries 3",
+                        "EOF",
+                        "",
+                        "cat > /etc/sysctl.d/99-l2tp.conf <<'EOF'",
+                        "net.ipv4.ip_forward=1",
+                        "EOF",
+                        "sysctl --system",
+                        "",
+                        "systemctl restart strongswan-starter || systemctl restart strongswan",
+                        "systemctl restart xl2tpd",
+                    );
+
+                    $installer_script = implode("\n", $installer_lines) . "\n";
+
+                    $setup_dir = dirname(__DIR__, 2) . '/setup';
+                    if (!is_dir($setup_dir)) {
+                        mkdir($setup_dir, 0750, true);
+                    }
+                    $installer_path = $setup_dir . '/l2tp-configure.sh';
+                    file_put_contents($installer_path, $installer_script);
+
+                    $packages_lines = array(
+                        "#!/usr/bin/env bash",
+                        "set -euo pipefail",
+                        "",
+                        "apt-get update",
+                        "apt-get install -y strongswan xl2tpd ppp freeradius-utils",
+                    );
+                    $packages_script = implode("\n", $packages_lines) . "\n";
+                    $packages_path = $setup_dir . '/l2tp-packages.sh';
+                    file_put_contents($packages_path, $packages_script);
+
+                    if (function_exists('exec')) {
+                        $command = "bash " . escapeshellarg($installer_path) . " 2>&1";
+                        $apply_output = array();
+                        $apply_exit = null;
+                        exec($command, $apply_output, $apply_exit);
+                        if ($apply_exit === 0) {
+                            $successMsg .= " Konfigurasi server berhasil diterapkan.";
+                        } else {
+                            $failureMsg = "Gagal menerapkan konfigurasi server. Jalankan manual sebagai root.";
+                            $logAction .= "Failed applying L2TP config on page: ";
+                        }
+                    }
                 }
             }
         } else {
@@ -142,8 +323,8 @@
         }
     }
 
-    $title = "VPN L2TP MikroTik";
-    $help = "Gunakan script berikut untuk membuat L2TP server pada MikroTik publik dan L2TP client pada MikroTik tanpa IP publik.";
+    $title = "VPN L2TP Linux + MikroTik Client";
+    $help = "Generate installer paket L2TP/IPsec di Linux (server ini), terapkan konfigurasi server, dan script client MikroTik.";
     print_html_prologue($title, $langCode);
     print_title_and_help($title, $help);
     include_once('include/management/actionMessages.php');
@@ -151,7 +332,7 @@
     $input_descriptors0 = array();
     $input_descriptors0[] = array(
         "name" => "server_host",
-        "caption" => "IP/Host MikroTik Server",
+        "caption" => "IP/Host L2TP Server (Linux)",
         "type" => "text",
         "value" => $values['server_host'],
     );
@@ -227,7 +408,7 @@
     );
     $input_descriptors0[] = array(
         "name" => "radius_route",
-        "caption" => "Route ke RADIUS (CIDR, opsional)",
+        "caption" => "Route ke RADIUS via L2TP (CIDR, opsional)",
         "type" => "text",
         "value" => $values['radius_route'],
     );
@@ -256,15 +437,50 @@
     close_form();
 
     echo '<div class="mt-4">';
-    echo '<h5>Script L2TP Server (MikroTik Publik)</h5>';
-    echo '<textarea id="l2tpServerScript" class="form-control" rows="7" readonly>'
+    echo '<h5>Konfigurasi L2TP Server (Linux)</h5>';
+    echo '<textarea id="l2tpServerScript" class="form-control" rows="18" readonly>'
         . htmlspecialchars($server_script, ENT_QUOTES, 'UTF-8') . '</textarea>';
-    echo '<button type="button" class="btn btn-outline-primary mt-2 js-copy" data-target="l2tpServerScript">Salin Script Server</button>';
+    echo '<button type="button" class="btn btn-outline-primary mt-2 js-copy" data-target="l2tpServerScript">Salin Konfigurasi Server</button>';
     echo '</div>';
 
+    if (!empty($installer_script)) {
+        echo '<div class="mt-4">';
+        echo '<h5>Installer Paket L2TP (Linux)</h5>';
+        echo '<textarea id="l2tpPackagesScript" class="form-control" rows="6" readonly>'
+            . htmlspecialchars($packages_script, ENT_QUOTES, 'UTF-8') . '</textarea>';
+        echo '<button type="button" class="btn btn-outline-primary mt-2 js-copy" data-target="l2tpPackagesScript">Salin Installer Paket</button>';
+        if (!empty($packages_path)) {
+            echo '<div class="alert alert-info mt-2 mb-0">';
+            echo 'Jalankan installer paket sekali saja: <code>bash ' . htmlspecialchars($packages_path, ENT_QUOTES, 'UTF-8') . '</code>';
+            echo '</div>';
+        }
+        echo '</div>';
+
+        echo '<div class="mt-4">';
+        echo '<h5>Installer Konfigurasi L2TP (Linux)</h5>';
+        echo '<textarea id="l2tpInstallerScript" class="form-control" rows="18" readonly>'
+            . htmlspecialchars($installer_script, ENT_QUOTES, 'UTF-8') . '</textarea>';
+        echo '<button type="button" class="btn btn-outline-primary mt-2 js-copy" data-target="l2tpInstallerScript">Salin Installer Konfigurasi</button>';
+        if (!empty($installer_path)) {
+            echo '<div class="alert alert-info mt-2 mb-0">';
+            echo 'Jalankan manual jika auto-apply gagal: <code>bash ' . htmlspecialchars($installer_path, ENT_QUOTES, 'UTF-8') . '</code>';
+            echo '</div>';
+        }
+        echo '</div>';
+    }
+
+    if (!empty($apply_output)) {
+        echo '<div class="mt-4">';
+        echo '<h5>Log Apply Konfigurasi</h5>';
+        echo '<pre class="small bg-light p-3 border">';
+        echo htmlspecialchars(implode("\n", $apply_output), ENT_QUOTES, 'UTF-8');
+        echo '</pre>';
+        echo '</div>';
+    }
+
     echo '<div class="mt-4">';
-    echo '<h5>Script L2TP Client (MikroTik Tanpa IP Publik)</h5>';
-    echo '<textarea id="l2tpClientScript" class="form-control" rows="7" readonly>'
+    echo '<h5>Script L2TP Client (MikroTik)</h5>';
+    echo '<textarea id="l2tpClientScript" class="form-control" rows="8" readonly>'
         . htmlspecialchars($client_script, ENT_QUOTES, 'UTF-8') . '</textarea>';
     echo '<button type="button" class="btn btn-outline-primary mt-2 js-copy" data-target="l2tpClientScript">Salin Script Client</button>';
     echo '</div>';
