@@ -333,6 +333,17 @@ $l['Tooltip']['planTaxTooltip'] = "Pajak paket.";
 $l['Tooltip']['planCurrencyTooltip'] = "Mata uang paket.";
 $l['Tooltip']['planGroupTooltip'] = "Grup atau profil yang terkait dengan paket.";
 
+$l['messages']['loginerror'] = <<<EOF
+<h1 class="fs-5">Tidak dapat masuk.</h1>
+<p>Biasanya ini terjadi karena salah satu hal berikut:
+    <ul>
+        <li>nama pengguna dan/atau kata sandi salah;</li>
+        <li>administrator lain sudah login<br>(hanya satu sesi yang diizinkan);</li>
+        <li>ada lebih dari satu pengguna 'administrator' di database.</li>
+    </ul>
+</p>
+EOF;
+
 $l['menu']['Home'] = "Beranda";
 $l['menu']['Managment'] = "Manajemen";
 $l['menu']['Reports'] = "Laporan";
