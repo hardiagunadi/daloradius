@@ -11,7 +11,13 @@ RADIUS_SECRET="change-me"
 RADIUS_AUTH_PORT="1812"
 RADIUS_ACCT_PORT="1813"
 
-install -d -m 0755 /etc/ppp/radius
+if [ "$(id -u)" -ne 0 ]; then
+  echo "This script must be run as root."
+  exit 1
+fi
+
+mkdir -p /etc/ppp/radius
+chmod 0755 /etc/ppp /etc/ppp/radius
 
 cat > /etc/ipsec.conf <<EOF
 config setup
