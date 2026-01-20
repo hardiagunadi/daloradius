@@ -65,6 +65,36 @@
     $packages_path = "";
     $apply_log_path = '';
     $apply_pid = '';
+    $current_run_id = '';
+    $log_dir = dirname(__DIR__, 2) . '/var/log';
+    $status_path = $log_dir . '/l2tp-config.status.json';
+
+    if (array_key_exists('l2tp_status', $_GET)) {
+        header('Content-Type: application/json; charset=UTF-8');
+        $status_payload = array('status' => 'unknown');
+        if (is_readable($status_path)) {
+            $contents = file_get_contents($status_path);
+            if ($contents !== false && trim($contents) !== '') {
+                echo $contents;
+                exit;
+            }
+        }
+        echo json_encode($status_payload);
+        exit;
+    }
+
+    if ($current_run_id === '' && is_readable($status_path)) {
+        $status_contents = file_get_contents($status_path);
+        $status_data = json_decode($status_contents, true);
+        if (is_array($status_data)
+            && array_key_exists('status', $status_data)
+            && in_array($status_data['status'], array('running', 'queued'), true)
+            && array_key_exists('run_id', $status_data)
+            && is_string($status_data['run_id'])
+        ) {
+            $current_run_id = $status_data['run_id'];
+        }
+    }
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (array_key_exists('csrf_token', $_POST) && isset($_POST['csrf_token']) && dalo_check_csrf_token($_POST['csrf_token'])) {
@@ -110,6 +140,7 @@
                     }
 
                     $pool_range = $pool_base . '2-' . $pool_base . '254';
+                    $current_run_id = uniqid('l2tp_', true);
                     $server_lines = array(
                         "# Linux L2TP/IPsec server (xl2tpd + strongSwan)",
                         "# Install: apt install -y strongswan xl2tpd ppp freeradius-utils",
@@ -209,6 +240,13 @@
                         "#!/usr/bin/env bash",
                         "set -euo pipefail",
                         "",
+                        "STATUS_FILE=\"" . $status_path . "\"",
+                        "STATUS_RUN_ID=\"" . $current_run_id . "\"",
+                        "write_status() { printf '{\"status\":\"%s\",\"time\":%s,\"run_id\":\"%s\"}\\n' \"$1\" \"$(date +%s)\" \"$STATUS_RUN_ID\" > \"$STATUS_FILE\"; }",
+                        "mkdir -p \"$(dirname \"$STATUS_FILE\")\"",
+                        "write_status \"running\"",
+                        "trap 'write_status \"failed\"' ERR",
+                        "",
                         "if [ \"$(id -u)\" -ne 0 ]; then",
                         "  echo \"This script must be run as root.\"",
                         "  exit 1",
@@ -287,6 +325,8 @@
                         "",
                         "systemctl restart strongswan-starter || systemctl restart strongswan",
                         "systemctl restart xl2tpd",
+                        "",
+                        "write_status \"success\"",
                     );
 
                     $installer_script = implode("\n", $installer_lines) . "\n";
@@ -310,11 +350,16 @@
                     file_put_contents($packages_path, $packages_script);
 
                     if (function_exists('exec')) {
-                        $log_dir = dirname(__DIR__, 2) . '/var/log';
                         if (!is_dir($log_dir)) {
                             mkdir($log_dir, 0750, true);
                         }
                         $apply_log_path = $log_dir . '/l2tp-config.log';
+                        $queued_payload = json_encode(array(
+                            'status' => 'queued',
+                            'time' => time(),
+                            'run_id' => $current_run_id,
+                        ));
+                        file_put_contents($status_path, $queued_payload . "\n");
                         $command = "nohup bash " . escapeshellarg($installer_path)
                                  . " > " . escapeshellarg($apply_log_path) . " 2>&1 & echo $!";
                         $output = array();
@@ -508,6 +553,53 @@ document.querySelectorAll('.js-copy').forEach(function(btn){
         }
     });
 });
+
+(function(){
+    var runId = "{$current_run_id}";
+    if (!runId) { return; }
+    var statusUrl = "config-l2tp.php?l2tp_status=1";
+    var shownKey = "l2tpApplyNotice_" + runId;
+    var pollDelayMs = 3000;
+
+    function showPopup(status) {
+        var message = status === "success"
+            ? "L2TP konfigurasi selesai diterapkan."
+            : "L2TP konfigurasi gagal. Cek log apply untuk detail.";
+        alert(message);
+    }
+
+    function scheduleNext(delay) {
+        window.setTimeout(checkStatus, delay);
+    }
+
+    function checkStatus() {
+        fetch(statusUrl, { cache: "no-store" })
+            .then(function(response){ return response.json(); })
+            .then(function(data){
+                if (!data || !data.status) {
+                    scheduleNext(pollDelayMs);
+                    return;
+                }
+                if (data.run_id && data.run_id !== runId) {
+                    scheduleNext(pollDelayMs);
+                    return;
+                }
+                if (data.status === "success" || data.status === "failed") {
+                    if (!sessionStorage.getItem(shownKey)) {
+                        sessionStorage.setItem(shownKey, "1");
+                        showPopup(data.status);
+                    }
+                    return;
+                }
+                scheduleNext(pollDelayMs);
+            })
+            .catch(function(){
+                scheduleNext(pollDelayMs + 2000);
+            });
+    }
+
+    checkStatus();
+})();
 JS;
 
     print_footer_and_html_epilogue($inline_extra_js);
