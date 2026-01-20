@@ -98,7 +98,7 @@
         $ensure_payload = array('status' => 'failed');
         $ensure_script = dirname(__DIR__, 2) . '/setup/ensure-wireguard-server-pub.sh';
         if (function_exists('exec') && is_file($ensure_script) && is_executable($ensure_script)) {
-            $ensure_cmd = "sudo bash " . escapeshellarg($ensure_script) . " >/dev/null 2>&1";
+            $ensure_cmd = "bash " . escapeshellarg($ensure_script) . " >/dev/null 2>&1";
             $ensure_out = array();
             $ensure_code = null;
             exec($ensure_cmd, $ensure_out, $ensure_code);
@@ -226,7 +226,7 @@
                 if ($server_public_key === '') {
                     $ensure_script = dirname(__DIR__, 2) . '/setup/ensure-wireguard-server-pub.sh';
                     if (is_file($ensure_script) && is_executable($ensure_script) && function_exists('exec')) {
-                        $ensure_cmd = "sudo bash " . escapeshellarg($ensure_script) . " >/dev/null 2>&1";
+                        $ensure_cmd = "bash " . escapeshellarg($ensure_script) . " >/dev/null 2>&1";
                         $ensure_out = array();
                         $ensure_code = null;
                         exec($ensure_cmd, $ensure_out, $ensure_code);
@@ -347,7 +347,7 @@
                     }
                     $ensure_script = dirname(__DIR__, 2) . '/setup/ensure-wireguard-server-pub.sh';
                     if (is_file($ensure_script) && is_executable($ensure_script)) {
-                        $ensure_cmd = "nohup sudo bash " . escapeshellarg($ensure_script)
+                        $ensure_cmd = "nohup bash " . escapeshellarg($ensure_script)
                             . " > /dev/null 2>&1 &";
                         $ensure_out = array();
                         $ensure_code = null;
