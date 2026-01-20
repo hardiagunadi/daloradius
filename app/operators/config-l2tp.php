@@ -93,6 +93,26 @@
         exit;
     }
 
+    if (array_key_exists('wg_ensure', $_GET)) {
+        header('Content-Type: application/json; charset=UTF-8');
+        $ensure_payload = array('status' => 'failed');
+        $ensure_script = dirname(__DIR__, 2) . '/setup/ensure-wireguard-server-pub.sh';
+        if (function_exists('exec') && is_file($ensure_script) && is_executable($ensure_script)) {
+            $ensure_cmd = "sudo bash " . escapeshellarg($ensure_script) . " >/dev/null 2>&1";
+            $ensure_out = array();
+            $ensure_code = null;
+            exec($ensure_cmd, $ensure_out, $ensure_code);
+            if ($ensure_code === 0 && is_readable($server_key_path)) {
+                $ensure_payload = array(
+                    'status' => 'success',
+                    'server_public_key' => trim(file_get_contents($server_key_path)),
+                );
+            }
+        }
+        echo json_encode($ensure_payload);
+        exit;
+    }
+
     if ($current_run_id === '' && is_readable($status_path)) {
         $status_contents = file_get_contents($status_path);
         $status_data = json_decode($status_contents, true);
@@ -457,6 +477,7 @@
     foreach ($input_descriptors1 as $input_descriptor) {
         print_form_component($input_descriptor);
     }
+    echo '<button type="button" class="btn btn-outline-secondary mt-2" id="wgEnsureKeyBtn">Sync Public Key VPS</button>';
     close_fieldset();
     close_form();
 
@@ -489,6 +510,28 @@ document.querySelectorAll('.js-copy').forEach(function(btn){
         }
     });
 });
+
+var ensureBtn = document.getElementById('wgEnsureKeyBtn');
+if (ensureBtn) {
+    ensureBtn.addEventListener('click', function(){
+        ensureBtn.disabled = true;
+        fetch('config-l2tp.php?wg_ensure=1', { cache: 'no-store' })
+            .then(function(response){ return response.json(); })
+            .then(function(data){
+                if (data && data.status === 'success') {
+                    alert('Public key VPS berhasil disinkronkan.');
+                } else {
+                    alert('Gagal sinkron public key VPS. Coba ulang atau cek permission sudo.');
+                }
+            })
+            .catch(function(){
+                alert('Gagal sinkron public key VPS. Coba ulang atau cek permission sudo.');
+            })
+            .finally(function(){
+                ensureBtn.disabled = false;
+            });
+    });
+}
 
 (function(){
     var runId = "{$current_run_id}";
