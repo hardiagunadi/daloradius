@@ -3,6 +3,8 @@ set -euo pipefail
 
 STATUS_FILE="/var/www/daloradius/var/log/wireguard-config.status.json"
 STATUS_RUN_ID="manual_wg_$(date +%s)"
+CLIENT_KEY_FILE="/var/www/daloradius/var/log/wireguard-client.key"
+CLIENT_PUBKEY=""
 write_status() {
   printf "{\"status\":\"%s\",\"time\":%s,\"run_id\":\"%s\"}\\n" "$1" "$(date +%s)" "$STATUS_RUN_ID" > "$STATUS_FILE"
 }
@@ -14,6 +16,13 @@ trap "write_status \"failed\"" ERR
 if [ "$(id -u)" -ne 0 ]; then
   echo "This script must be run as root."
   exit 1
+fi
+
+if [ -f "$CLIENT_KEY_FILE" ]; then
+  CLIENT_PUBKEY="$(head -n 1 "$CLIENT_KEY_FILE" | tr -d "[:space:]")"
+fi
+if [ -z "$CLIENT_PUBKEY" ]; then
+  CLIENT_PUBKEY="PASTE_MIKROTIK_PUBLIC_KEY"
 fi
 
 missing_pkgs=()
@@ -48,7 +57,7 @@ PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEP
 PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT
 
 [Peer]
-PublicKey = Uls8N23NvXkDcJedgAiDcdCXs8xq16wgh/6eseQQXyI=
+PublicKey = ${CLIENT_PUBKEY}
 AllowedIPs = 10.200.200.2/32, 10.10.10.0/24
 EOF_WG
 chmod 600 /etc/wireguard/wg0.conf

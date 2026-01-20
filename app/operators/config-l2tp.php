@@ -66,9 +66,16 @@
     $current_run_id = '';
     $log_dir = dirname(__DIR__, 2) . '/var/log';
     $status_path = $log_dir . '/wireguard-config.status.json';
+    $client_key_path = $log_dir . '/wireguard-client.key';
     if ($_SERVER['REQUEST_METHOD'] !== 'POST' && $values['radius_secret'] === '') {
         $allowed_chars = $configValues['CONFIG_USER_ALLOWEDRANDOMCHARS'] ?? '';
         $values['radius_secret'] = generate_radius_secret(16, $allowed_chars);
+    }
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST' && $values['client_public_key'] === '' && is_readable($client_key_path)) {
+        $saved_key = trim(file_get_contents($client_key_path));
+        if ($saved_key !== '') {
+            $values['client_public_key'] = $saved_key;
+        }
     }
 
     if (array_key_exists('wg_status', $_GET)) {
@@ -127,6 +134,12 @@
             if ($values['radius_server'] === '' && $server_wg_ip !== '') {
                 $values['radius_server'] = $server_wg_ip;
             }
+            if ($values['client_public_key'] === '' && is_readable($client_key_path)) {
+                $saved_key = trim(file_get_contents($client_key_path));
+                if ($saved_key !== '') {
+                    $values['client_public_key'] = $saved_key;
+                }
+            }
             if ($values['radius_secret'] === '') {
                 $allowed_chars = $configValues['CONFIG_USER_ALLOWEDRANDOMCHARS'] ?? '';
                 $values['radius_secret'] = generate_radius_secret(16, $allowed_chars);
@@ -138,6 +151,10 @@
                 $failureMsg = "Server, WireGuard, client key, subnet, dan RADIUS harus diisi.";
                 $logAction .= "Failed generating WireGuard scripts (missing data) on page: ";
             } else {
+                if (!is_dir($log_dir)) {
+                    mkdir($log_dir, 0750, true);
+                }
+                file_put_contents($client_key_path, $values['client_public_key'] . "\n");
                 $current_run_id = uniqid('wg_', true);
                 $server_lines = array(
                     "# WireGuard server (VPS)",
