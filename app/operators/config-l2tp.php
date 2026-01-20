@@ -1,7 +1,7 @@
 <?php
 /*
  *********************************************************************************************************
- * daloRADIUS - L2TP VPN helper
+ * daloRADIUS - WireGuard VPN helper
  *********************************************************************************************************
  */
 
@@ -19,41 +19,39 @@
     $logAction = "";
     $logDebugSQL = "";
 
-    function l2tp_ipv4_base($network) {
-        $parts = explode('.', trim($network));
-        if (count($parts) !== 4) {
-            return '';
-        }
-        foreach ($parts as $part) {
-            if ($part === '' || !ctype_digit($part)) {
-                return '';
-            }
-            $octet = intval($part);
-            if ($octet < 0 || $octet > 255) {
-                return '';
-            }
-        }
-        return $parts[0] . '.' . $parts[1] . '.' . $parts[2] . '.';
-    }
-
     function mikrotik_escape($value) {
         return str_replace('"', '\"', $value);
     }
 
+    function generate_radius_secret($length, $allowed_chars) {
+        $chars = trim($allowed_chars);
+        if ($chars === '') {
+            $chars = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
+        }
+        $chars_len = strlen($chars);
+        if ($chars_len === 0) {
+            return '';
+        }
+        $bytes = random_bytes($length);
+        $secret = '';
+        for ($i = 0; $i < $length; $i++) {
+            $secret .= $chars[ord($bytes[$i]) % $chars_len];
+        }
+        return $secret;
+    }
+
     $defaults = array(
         'server_host' => '',
-        'ipsec_secret' => '',
-        'l2tp_username' => '',
-        'l2tp_password' => '',
-        'client_name' => 'l2tp-tmdradius',
-        'pool_network' => '10.10.10.0',
-        'pool_cidr' => 24,
-        'local_address' => '10.10.10.1',
-        'radius_server' => '10.10.10.1',
+        'client_name' => 'wg-vps',
+        'wg_listen_port' => 51820,
+        'wg_server_address' => '10.200.200.1/24',
+        'wg_client_address' => '10.200.200.2/32',
+        'allowed_subnet' => '10.10.10.0/24',
+        'client_public_key' => '',
+        'radius_server' => '10.200.200.1',
         'radius_secret' => '',
         'radius_auth_port' => 1812,
         'radius_acct_port' => 1813,
-        'radius_route' => '10.10.10.1/32',
     );
 
     $values = $defaults;
@@ -67,9 +65,13 @@
     $apply_pid = '';
     $current_run_id = '';
     $log_dir = dirname(__DIR__, 2) . '/var/log';
-    $status_path = $log_dir . '/l2tp-config.status.json';
+    $status_path = $log_dir . '/wireguard-config.status.json';
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST' && $values['radius_secret'] === '') {
+        $allowed_chars = $configValues['CONFIG_USER_ALLOWEDRANDOMCHARS'] ?? '';
+        $values['radius_secret'] = generate_radius_secret(16, $allowed_chars);
+    }
 
-    if (array_key_exists('l2tp_status', $_GET)) {
+    if (array_key_exists('wg_status', $_GET)) {
         header('Content-Type: application/json; charset=UTF-8');
         $status_payload = array('status' => 'unknown');
         if (is_readable($status_path)) {
@@ -99,279 +101,192 @@
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (array_key_exists('csrf_token', $_POST) && isset($_POST['csrf_token']) && dalo_check_csrf_token($_POST['csrf_token'])) {
             $values['server_host'] = (array_key_exists('server_host', $_POST)) ? trim($_POST['server_host']) : "";
-            $values['ipsec_secret'] = (array_key_exists('ipsec_secret', $_POST)) ? trim($_POST['ipsec_secret']) : "";
-            $values['l2tp_username'] = (array_key_exists('l2tp_username', $_POST)) ? trim($_POST['l2tp_username']) : "";
-            $values['l2tp_password'] = (array_key_exists('l2tp_password', $_POST)) ? trim($_POST['l2tp_password']) : "";
             $values['client_name'] = (array_key_exists('client_name', $_POST) && trim($_POST['client_name']) !== "")
                                    ? trim($_POST['client_name']) : $defaults['client_name'];
-            $values['pool_network'] = (array_key_exists('pool_network', $_POST)) ? trim($_POST['pool_network']) : $defaults['pool_network'];
-            $values['pool_cidr'] = (array_key_exists('pool_cidr', $_POST) && intval($_POST['pool_cidr']) > 0)
-                                 ? intval($_POST['pool_cidr']) : $defaults['pool_cidr'];
-            $values['local_address'] = (array_key_exists('local_address', $_POST)) ? trim($_POST['local_address']) : "";
+            $values['wg_listen_port'] = (array_key_exists('wg_listen_port', $_POST) && intval($_POST['wg_listen_port']) > 0)
+                                      ? intval($_POST['wg_listen_port']) : $defaults['wg_listen_port'];
+            $values['wg_server_address'] = (array_key_exists('wg_server_address', $_POST))
+                                         ? trim($_POST['wg_server_address']) : $defaults['wg_server_address'];
+            $values['wg_client_address'] = (array_key_exists('wg_client_address', $_POST))
+                                         ? trim($_POST['wg_client_address']) : $defaults['wg_client_address'];
+            $values['allowed_subnet'] = (array_key_exists('allowed_subnet', $_POST))
+                                      ? trim($_POST['allowed_subnet']) : $defaults['allowed_subnet'];
+            $values['client_public_key'] = (array_key_exists('client_public_key', $_POST))
+                                         ? trim($_POST['client_public_key']) : "";
             $values['radius_server'] = (array_key_exists('radius_server', $_POST)) ? trim($_POST['radius_server']) : "";
             $values['radius_secret'] = (array_key_exists('radius_secret', $_POST)) ? trim($_POST['radius_secret']) : "";
             $values['radius_auth_port'] = (array_key_exists('radius_auth_port', $_POST) && intval($_POST['radius_auth_port']) > 0)
                                         ? intval($_POST['radius_auth_port']) : $defaults['radius_auth_port'];
             $values['radius_acct_port'] = (array_key_exists('radius_acct_port', $_POST) && intval($_POST['radius_acct_port']) > 0)
                                         ? intval($_POST['radius_acct_port']) : $defaults['radius_acct_port'];
-            $values['radius_route'] = (array_key_exists('radius_route', $_POST)) ? trim($_POST['radius_route']) : "";
 
-            if (empty($values['server_host']) || empty($values['ipsec_secret']) || empty($values['l2tp_username']) || empty($values['l2tp_password'])
-                || empty($values['pool_network']) || empty($values['radius_server']) || empty($values['radius_secret'])) {
-                $failureMsg = "Server, IPsec, user, password, network pool, dan RADIUS harus diisi.";
-                $logAction .= "Failed generating L2TP scripts (missing data) on page: ";
-            } elseif (intval($values['pool_cidr']) !== 24) {
-                $failureMsg = "CIDR pool harus /24 sesuai blok private tipe A.";
-                $logAction .= "Failed generating L2TP scripts (invalid CIDR) on page: ";
+            $server_wg_ip = '';
+            if (strpos($values['wg_server_address'], '/') !== false) {
+                $server_wg_ip = trim(explode('/', $values['wg_server_address'])[0]);
+            }
+            if ($values['radius_server'] === '' && $server_wg_ip !== '') {
+                $values['radius_server'] = $server_wg_ip;
+            }
+            if ($values['radius_secret'] === '') {
+                $allowed_chars = $configValues['CONFIG_USER_ALLOWEDRANDOMCHARS'] ?? '';
+                $values['radius_secret'] = generate_radius_secret(16, $allowed_chars);
+            }
+
+            if (empty($values['server_host']) || empty($values['wg_server_address']) || empty($values['wg_client_address'])
+                || empty($values['allowed_subnet']) || empty($values['client_public_key'])
+                || empty($values['radius_server']) || empty($values['radius_secret'])) {
+                $failureMsg = "Server, WireGuard, client key, subnet, dan RADIUS harus diisi.";
+                $logAction .= "Failed generating WireGuard scripts (missing data) on page: ";
             } else {
-                $pool_base = l2tp_ipv4_base($values['pool_network']);
-                if ($pool_base === '') {
-                    $failureMsg = "Network pool tidak valid.";
-                    $logAction .= "Failed generating L2TP scripts (invalid pool) on page: ";
-                } elseif (strpos($pool_base, '10.') !== 0) {
-                    $failureMsg = "Network pool harus menggunakan blok private A (10.0.0.0/8).";
-                    $logAction .= "Failed generating L2TP scripts (non private A pool) on page: ";
-                } else {
-                    if ($values['local_address'] === '') {
-                        $values['local_address'] = $pool_base . '1';
-                    }
-                    if ($values['radius_route'] === '') {
-                        $values['radius_route'] = $values['radius_server'] . '/32';
-                    }
+                $current_run_id = uniqid('wg_', true);
+                $server_lines = array(
+                    "# WireGuard server (VPS)",
+                    "apt-get update",
+                    "apt-get install -y wireguard",
+                    "",
+                    "umask 077",
+                    "mkdir -p /etc/wireguard",
+                    "wg genkey | tee /etc/wireguard/wg0.key | wg pubkey > /etc/wireguard/wg0.pub",
+                    "chmod 600 /etc/wireguard/wg0.key",
+                    "chmod 644 /etc/wireguard/wg0.pub",
+                    "",
+                    "cat > /etc/wireguard/wg0.conf <<EOF",
+                    "[Interface]",
+                    "Address = " . $values['wg_server_address'],
+                    "ListenPort = " . $values['wg_listen_port'],
+                    "PrivateKey = $(cat /etc/wireguard/wg0.key)",
+                    "PostUp = sysctl -w net.ipv4.ip_forward=1",
+                    "PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT",
+                    "PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT",
+                    "",
+                    "[Peer]",
+                    "PublicKey = " . $values['client_public_key'],
+                    "AllowedIPs = " . $values['wg_client_address'] . ", " . $values['allowed_subnet'],
+                    "EOF",
+                    "",
+                    "cat > /etc/sysctl.d/99-wireguard.conf <<'EOF'",
+                    "net.ipv4.ip_forward=1",
+                    "EOF",
+                    "sysctl --system",
+                    "",
+                    "systemctl enable wg-quick@wg0",
+                    "systemctl restart wg-quick@wg0",
+                    "",
+                    "# Open firewall (adjust to your firewall tool)",
+                    "ufw allow " . $values['wg_listen_port'] . "/udp",
+                    "",
+                    "echo 'Server public key:'",
+                    "cat /etc/wireguard/wg0.pub",
+                );
 
-                    $pool_range = $pool_base . '2-' . $pool_base . '254';
-                    $current_run_id = uniqid('l2tp_', true);
-                    $server_lines = array(
-                        "# Linux L2TP/IPsec server (xl2tpd + strongSwan)",
-                        "# Install: apt install -y strongswan xl2tpd ppp freeradius-utils",
-                        "",
-                        "# /etc/ipsec.conf",
-                        "config setup",
-                        "    uniqueids=no",
-                        "",
-                        "conn l2tp-psk",
-                        "    keyexchange=ikev1",
-                        "    authby=psk",
-                        "    type=transport",
-                        "    left=" . $values['server_host'],
-                        "    leftprotoport=17/1701",
-                        "    right=%any",
-                        "    rightprotoport=17/%any",
-                        "    auto=add",
-                        "",
-                        "# /etc/ipsec.secrets",
-                        $values['server_host'] . " %any : PSK \"" . $values['ipsec_secret'] . "\"",
-                        "",
-                        "# /etc/xl2tpd/xl2tpd.conf",
-                        "[global]",
-                        "port = 1701",
-                        "",
-                        "[lns default]",
-                        "ip range = " . $pool_range,
-                        "local ip = " . $values['local_address'],
-                        "require chap = yes",
-                        "refuse pap = yes",
-                        "require authentication = yes",
-                        "name = l2tpd",
-                        "pppoptfile = /etc/ppp/options.xl2tpd",
-                        "length bit = yes",
-                        "",
-                        "# /etc/ppp/options.xl2tpd",
-                        "require-mschap-v2",
-                        "refuse-pap",
-                        "refuse-chap",
-                        "refuse-mschap",
-                        "ms-dns 8.8.8.8",
-                        "ms-dns 1.1.1.1",
-                        "mtu 1410",
-                        "mru 1410",
-                        "lock",
-                        "auth",
-                        "proxyarp",
-                        "lcp-echo-interval 30",
-                        "lcp-echo-failure 4",
-                        "plugin radius.so",
-                        "radius-config-file /etc/ppp/radius/radius.conf",
-                        "",
-                        "# /etc/ppp/radius/servers",
-                        $values['radius_server'] . " " . $values['radius_secret'],
-                        "",
-                        "# /etc/ppp/radius/radius.conf",
-                        "authserver " . $values['radius_server'],
-                        "acctserver " . $values['radius_server'],
-                        "radius_timeout 10",
-                        "radius_retries 3",
-                        "",
-                        "# Enable forwarding",
-                        "sysctl -w net.ipv4.ip_forward=1",
-                        "",
-                        "# Open firewall (adjust to your firewall tool)",
-                        "ufw allow 500/udp",
-                        "ufw allow 4500/udp",
-                        "ufw allow 1701/udp",
-                        "ufw allow " . $values['radius_auth_port'] . "/udp",
-                        "ufw allow " . $values['radius_acct_port'] . "/udp",
-                        "",
-                        "# Restart services",
-                        "systemctl restart strongswan-starter xl2tpd",
-                    );
-
-                    $client_lines = array(
-                        "/interface l2tp-client add name=\"" . mikrotik_escape($values['client_name'])
-                            . "\" connect-to=" . $values['server_host']
-                            . " user=\"" . mikrotik_escape($values['l2tp_username']) . "\" password=\""
-                            . mikrotik_escape($values['l2tp_password']) . "\" use-ipsec=yes ipsec-secret=\""
-                            . mikrotik_escape($values['ipsec_secret']) . "\" add-default-route=no disabled=no",
-                    );
-                    if ($values['radius_route'] !== '') {
-                        $client_lines[] = "/ip route add dst-address=" . $values['radius_route']
-                            . " gateway=\"" . mikrotik_escape($values['client_name']) . "\"";
-                    }
-                    $client_lines[] = "/radius add service=ppp,hotspot,login address=" . $values['radius_server']
+                $server_public_key = '';
+                if (is_readable('/etc/wireguard/wg0.pub')) {
+                    $server_public_key = trim(file_get_contents('/etc/wireguard/wg0.pub'));
+                }
+                $server_public_key = ($server_public_key !== '') ? $server_public_key : 'PASTE_SERVER_PUBLIC_KEY';
+                $server_peer_ip = ($server_wg_ip !== '') ? ($server_wg_ip . '/32') : $values['wg_server_address'];
+                $client_lines = array(
+                    "/interface wireguard add name=\"" . mikrotik_escape($values['client_name']) . "\" listen-port=" . $values['wg_listen_port'],
+                    "/ip/address add address=" . $values['wg_client_address'] . " interface=\"" . mikrotik_escape($values['client_name']) . "\"",
+                    "/interface wireguard peers add interface=\"" . mikrotik_escape($values['client_name']) . "\" public-key=\""
+                        . mikrotik_escape($server_public_key) . "\" endpoint-address=" . $values['server_host']
+                        . " endpoint-port=" . $values['wg_listen_port'] . " allowed-address=" . $server_peer_ip
+                        . "," . $values['allowed_subnet'] . " persistent-keepalive=25s",
+                    "/ip/route add dst-address=" . $values['allowed_subnet'] . " gateway=\"" . mikrotik_escape($values['client_name']) . "\"",
+                    "/radius add service=ppp,hotspot,login address=" . $values['radius_server']
                         . " secret=\"" . mikrotik_escape($values['radius_secret']) . "\" authentication-port="
-                        . $values['radius_auth_port'] . " accounting-port=" . $values['radius_acct_port'] . " timeout=2s";
+                        . $values['radius_auth_port'] . " accounting-port=" . $values['radius_acct_port'] . " timeout=2s",
+                );
+                if ($server_public_key === 'PASTE_SERVER_PUBLIC_KEY') {
+                    array_unshift($client_lines, "# Replace PASTE_SERVER_PUBLIC_KEY with VPS public key after apply.");
+                }
 
-                    $server_script = implode("\n", $server_lines);
-                    $client_script = implode("\n", $client_lines);
-                    $successMsg = "Script VPN L2TP berhasil dibuat.";
-                    $logAction .= "Generated L2TP scripts on page: ";
+                $server_script = implode("\n", $server_lines);
+                $client_script = implode("\n", $client_lines);
+                $successMsg = "Script VPN WireGuard berhasil dibuat.";
+                $logAction .= "Generated WireGuard scripts on page: ";
 
-                    $installer_lines = array(
-                        "#!/usr/bin/env bash",
-                        "set -euo pipefail",
-                        "",
-                        "STATUS_FILE=\"" . $status_path . "\"",
-                        "STATUS_RUN_ID=\"" . $current_run_id . "\"",
-                        "write_status() { printf '{\"status\":\"%s\",\"time\":%s,\"run_id\":\"%s\"}\\n' \"$1\" \"$(date +%s)\" \"$STATUS_RUN_ID\" > \"$STATUS_FILE\"; }",
-                        "mkdir -p \"$(dirname \"$STATUS_FILE\")\"",
-                        "write_status \"running\"",
-                        "trap 'write_status \"failed\"' ERR",
-                        "",
-                        "if [ \"$(id -u)\" -ne 0 ]; then",
-                        "  echo \"This script must be run as root.\"",
-                        "  exit 1",
-                        "fi",
-                        "",
-                        "mkdir -p /etc/ppp/radius",
-                        "chmod 0755 /etc/ppp /etc/ppp/radius",
-                        "",
-                        "cat > /etc/ipsec.conf <<'EOF'",
-                        "config setup",
-                        "    uniqueids=no",
-                        "",
-                        "conn l2tp-psk",
-                        "    keyexchange=ikev1",
-                        "    authby=psk",
-                        "    type=transport",
-                        "    left=" . $values['server_host'],
-                        "    leftprotoport=17/1701",
-                        "    right=%any",
-                        "    rightprotoport=17/%any",
-                        "    auto=add",
-                        "EOF",
-                        "",
-                        "cat > /etc/ipsec.secrets <<'EOF'",
-                        $values['server_host'] . " %any : PSK \"" . $values['ipsec_secret'] . "\"",
-                        "EOF",
-                        "",
-                        "cat > /etc/xl2tpd/xl2tpd.conf <<'EOF'",
-                        "[global]",
-                        "port = 1701",
-                        "",
-                        "[lns default]",
-                        "ip range = " . $pool_range,
-                        "local ip = " . $values['local_address'],
-                        "require chap = yes",
-                        "refuse pap = yes",
-                        "require authentication = yes",
-                        "name = l2tpd",
-                        "pppoptfile = /etc/ppp/options.xl2tpd",
-                        "length bit = yes",
-                        "EOF",
-                        "",
-                        "cat > /etc/ppp/options.xl2tpd <<'EOF'",
-                        "require-mschap-v2",
-                        "refuse-pap",
-                        "refuse-chap",
-                        "refuse-mschap",
-                        "ms-dns 8.8.8.8",
-                        "ms-dns 1.1.1.1",
-                        "mtu 1410",
-                        "mru 1410",
-                        "lock",
-                        "auth",
-                        "proxyarp",
-                        "lcp-echo-interval 30",
-                        "lcp-echo-failure 4",
-                        "plugin radius.so",
-                        "radius-config-file /etc/ppp/radius/radius.conf",
-                        "EOF",
-                        "",
-                        "cat > /etc/ppp/radius/servers <<'EOF'",
-                        $values['radius_server'] . " " . $values['radius_secret'],
-                        "EOF",
-                        "",
-                        "cat > /etc/ppp/radius/radius.conf <<'EOF'",
-                        "authserver " . $values['radius_server'],
-                        "acctserver " . $values['radius_server'],
-                        "radius_timeout 10",
-                        "radius_retries 3",
-                        "EOF",
-                        "",
-                        "cat > /etc/sysctl.d/99-l2tp.conf <<'EOF'",
-                        "net.ipv4.ip_forward=1",
-                        "EOF",
-                        "sysctl --system",
-                        "",
-                        "systemctl restart strongswan-starter || systemctl restart strongswan",
-                        "systemctl restart xl2tpd",
-                        "",
-                        "write_status \"success\"",
-                    );
+                $installer_lines = array(
+                    "#!/usr/bin/env bash",
+                    "set -euo pipefail",
+                    "",
+                    "STATUS_FILE=\"" . $status_path . "\"",
+                    "STATUS_RUN_ID=\"" . $current_run_id . "\"",
+                    "write_status() { printf '{\"status\":\"%s\",\"time\":%s,\"run_id\":\"%s\"}\\n' \"$1\" \"$(date +%s)\" \"$STATUS_RUN_ID\" > \"$STATUS_FILE\"; }",
+                    "mkdir -p \"$(dirname \"$STATUS_FILE\")\"",
+                    "write_status \"running\"",
+                    "trap 'write_status \"failed\"' ERR",
+                    "",
+                    "if [ \"$(id -u)\" -ne 0 ]; then",
+                    "  echo \"This script must be run as root.\"",
+                    "  exit 1",
+                    "fi",
+                    "",
+                    "apt-get update",
+                    "apt-get install -y wireguard",
+                    "",
+                    "umask 077",
+                    "mkdir -p /etc/wireguard",
+                    "wg genkey | tee /etc/wireguard/wg0.key | wg pubkey > /etc/wireguard/wg0.pub",
+                    "chmod 600 /etc/wireguard/wg0.key",
+                    "chmod 644 /etc/wireguard/wg0.pub",
+                    "",
+                    "cat > /etc/wireguard/wg0.conf <<EOF",
+                    "[Interface]",
+                    "Address = " . $values['wg_server_address'],
+                    "ListenPort = " . $values['wg_listen_port'],
+                    "PrivateKey = $(cat /etc/wireguard/wg0.key)",
+                    "PostUp = sysctl -w net.ipv4.ip_forward=1",
+                    "PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT",
+                    "PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT",
+                    "",
+                    "[Peer]",
+                    "PublicKey = " . $values['client_public_key'],
+                    "AllowedIPs = " . $values['wg_client_address'] . ", " . $values['allowed_subnet'],
+                    "EOF",
+                    "",
+                    "cat > /etc/sysctl.d/99-wireguard.conf <<'EOF'",
+                    "net.ipv4.ip_forward=1",
+                    "EOF",
+                    "sysctl --system",
+                    "",
+                    "systemctl enable wg-quick@wg0",
+                    "systemctl restart wg-quick@wg0",
+                    "",
+                    "write_status \"success\"",
+                );
 
-                    $installer_script = implode("\n", $installer_lines) . "\n";
+                $installer_script = implode("\n", $installer_lines) . "\n";
 
-                    $setup_dir = dirname(__DIR__, 2) . '/setup';
-                    if (!is_dir($setup_dir)) {
-                        mkdir($setup_dir, 0750, true);
+                $setup_dir = dirname(__DIR__, 2) . '/setup';
+                if (!is_dir($setup_dir)) {
+                    mkdir($setup_dir, 0750, true);
+                }
+                $installer_path = $setup_dir . '/wireguard-configure.sh';
+                file_put_contents($installer_path, $installer_script);
+
+                if (function_exists('exec')) {
+                    if (!is_dir($log_dir)) {
+                        mkdir($log_dir, 0750, true);
                     }
-                    $installer_path = $setup_dir . '/l2tp-configure.sh';
-                    file_put_contents($installer_path, $installer_script);
-
-                    $packages_lines = array(
-                        "#!/usr/bin/env bash",
-                        "set -euo pipefail",
-                        "",
-                        "apt-get update",
-                        "apt-get install -y strongswan xl2tpd ppp freeradius-utils",
-                    );
-                    $packages_script = implode("\n", $packages_lines) . "\n";
-                    $packages_path = $setup_dir . '/l2tp-packages.sh';
-                    file_put_contents($packages_path, $packages_script);
-
-                    if (function_exists('exec')) {
-                        if (!is_dir($log_dir)) {
-                            mkdir($log_dir, 0750, true);
-                        }
-                        $apply_log_path = $log_dir . '/l2tp-config.log';
-                        $queued_payload = json_encode(array(
-                            'status' => 'queued',
-                            'time' => time(),
-                            'run_id' => $current_run_id,
-                        ));
-                        file_put_contents($status_path, $queued_payload . "\n");
-                        $command = "nohup bash " . escapeshellarg($installer_path)
-                                 . " > " . escapeshellarg($apply_log_path) . " 2>&1 & echo $!";
-                        $output = array();
-                        $exit_code = null;
-                        exec($command, $output, $exit_code);
-                        if ($exit_code === 0 && !empty($output[0])) {
-                            $apply_pid = trim($output[0]);
-                            $successMsg .= " Konfigurasi server dijalankan di background (PID: {$apply_pid}).";
-                        } else {
-                            $failureMsg = "Gagal menjalankan konfigurasi di background. Jalankan manual sebagai root.";
-                            $logAction .= "Failed applying L2TP config on page: ";
-                        }
+                    $apply_log_path = $log_dir . '/wireguard-config.log';
+                    $queued_payload = json_encode(array(
+                        'status' => 'queued',
+                        'time' => time(),
+                        'run_id' => $current_run_id,
+                    ));
+                    file_put_contents($status_path, $queued_payload . "\n");
+                    $command = "nohup bash " . escapeshellarg($installer_path)
+                             . " > " . escapeshellarg($apply_log_path) . " 2>&1 & echo $!";
+                    $output = array();
+                    $exit_code = null;
+                    exec($command, $output, $exit_code);
+                    if ($exit_code === 0 && !empty($output[0])) {
+                        $apply_pid = trim($output[0]);
+                        $successMsg .= " Konfigurasi server dijalankan di background (PID: {$apply_pid}).";
+                    } else {
+                        $failureMsg = "Gagal menjalankan konfigurasi di background. Jalankan manual sebagai root.";
+                        $logAction .= "Failed applying WireGuard config on page: ";
                     }
                 }
             }
@@ -381,8 +296,8 @@
         }
     }
 
-    $title = "VPN L2TP Linux + MikroTik Client";
-    $help = "Generate installer paket L2TP/IPsec di Linux (server ini), terapkan konfigurasi server, dan script client MikroTik.";
+    $title = "VPN WireGuard + RADIUS";
+    $help = "Generate konfigurasi WireGuard di VPS, terapkan server, dan script client MikroTik (termasuk RADIUS).";
     print_html_prologue($title, $langCode);
     print_title_and_help($title, $help);
     include_once('include/management/actionMessages.php');
@@ -390,57 +305,50 @@
     $input_descriptors0 = array();
     $input_descriptors0[] = array(
         "name" => "server_host",
-        "caption" => "IP/Host L2TP Server (Linux)",
+        "caption" => "IP/Host VPS (Public)",
         "type" => "text",
         "value" => $values['server_host'],
     );
     $input_descriptors0[] = array(
-        "name" => "ipsec_secret",
-        "caption" => "IPsec PSK",
-        "type" => "text",
-        "value" => $values['ipsec_secret'],
-    );
-    $input_descriptors0[] = array(
-        "name" => "l2tp_username",
-        "caption" => "Username L2TP",
-        "type" => "text",
-        "value" => $values['l2tp_username'],
-    );
-    $input_descriptors0[] = array(
-        "name" => "l2tp_password",
-        "caption" => "Password L2TP",
-        "type" => "text",
-        "value" => $values['l2tp_password'],
-    );
-    $input_descriptors0[] = array(
         "name" => "client_name",
-        "caption" => "Nama Interface L2TP Client",
+        "caption" => "Nama Interface WireGuard Client",
         "type" => "text",
         "value" => $values['client_name'],
     );
     $input_descriptors0[] = array(
-        "name" => "pool_network",
-        "caption" => "Network Pool (private A)",
-        "type" => "text",
-        "value" => $values['pool_network'],
-    );
-    $input_descriptors0[] = array(
-        "name" => "pool_cidr",
-        "caption" => "CIDR Pool",
+        "name" => "wg_listen_port",
+        "caption" => "WireGuard Port (UDP)",
         "type" => "number",
-        "min" => "24",
-        "max" => "24",
-        "value" => $values['pool_cidr'],
+        "min" => "1",
+        "value" => $values['wg_listen_port'],
     );
     $input_descriptors0[] = array(
-        "name" => "local_address",
-        "caption" => "IP Local L2TP Server",
+        "name" => "wg_server_address",
+        "caption" => "IP WireGuard Server (CIDR)",
         "type" => "text",
-        "value" => $values['local_address'],
+        "value" => $values['wg_server_address'],
+    );
+    $input_descriptors0[] = array(
+        "name" => "wg_client_address",
+        "caption" => "IP WireGuard Client (CIDR)",
+        "type" => "text",
+        "value" => $values['wg_client_address'],
+    );
+    $input_descriptors0[] = array(
+        "name" => "allowed_subnet",
+        "caption" => "Subnet Lokal MikroTik (routed via WG)",
+        "type" => "text",
+        "value" => $values['allowed_subnet'],
+    );
+    $input_descriptors0[] = array(
+        "name" => "client_public_key",
+        "caption" => "WireGuard Public Key (MikroTik)",
+        "type" => "text",
+        "value" => $values['client_public_key'],
     );
     $input_descriptors0[] = array(
         "name" => "radius_server",
-        "caption" => "IP RADIUS Server",
+        "caption" => "IP RADIUS Server (via WG)",
         "type" => "text",
         "value" => $values['radius_server'],
     );
@@ -448,6 +356,7 @@
         "name" => "radius_secret",
         "caption" => "RADIUS Secret",
         "type" => "text",
+        "random" => true,
         "value" => $values['radius_secret'],
     );
     $input_descriptors0[] = array(
@@ -464,13 +373,6 @@
         "min" => "1",
         "value" => $values['radius_acct_port'],
     );
-    $input_descriptors0[] = array(
-        "name" => "radius_route",
-        "caption" => "Route ke RADIUS via L2TP (CIDR, opsional)",
-        "type" => "text",
-        "value" => $values['radius_route'],
-    );
-
     $input_descriptors1 = array();
     $input_descriptors1[] = array(
         "name" => "csrf_token",
@@ -484,7 +386,7 @@
     );
 
     open_form();
-    open_fieldset(array("title" => "Generate Script L2TP"));
+    open_fieldset(array("title" => "Generate Script WireGuard"));
     foreach ($input_descriptors0 as $input_descriptor) {
         print_form_component($input_descriptor);
     }
@@ -496,22 +398,10 @@
 
     if (!empty($installer_script)) {
         echo '<div class="mt-4">';
-        echo '<h5>Installer Paket L2TP (Linux)</h5>';
-        echo '<textarea id="l2tpPackagesScript" class="form-control" rows="6" readonly>'
-            . htmlspecialchars($packages_script, ENT_QUOTES, 'UTF-8') . '</textarea>';
-        echo '<button type="button" class="btn btn-outline-primary mt-2 js-copy" data-target="l2tpPackagesScript">Salin Installer Paket</button>';
-        if (!empty($packages_path)) {
-            echo '<div class="alert alert-info mt-2 mb-0">';
-            echo 'Jalankan installer paket sekali saja: <code>bash ' . htmlspecialchars($packages_path, ENT_QUOTES, 'UTF-8') . '</code>';
-            echo '</div>';
-        }
-        echo '</div>';
-
-        echo '<div class="mt-4">';
-        echo '<h5>Installer Konfigurasi L2TP (Linux)</h5>';
-        echo '<textarea id="l2tpInstallerScript" class="form-control" rows="18" readonly>'
+        echo '<h5>Installer Konfigurasi WireGuard (VPS)</h5>';
+        echo '<textarea id="wgInstallerScript" class="form-control" rows="18" readonly>'
             . htmlspecialchars($installer_script, ENT_QUOTES, 'UTF-8') . '</textarea>';
-        echo '<button type="button" class="btn btn-outline-primary mt-2 js-copy" data-target="l2tpInstallerScript">Salin Installer Konfigurasi</button>';
+        echo '<button type="button" class="btn btn-outline-primary mt-2 js-copy" data-target="wgInstallerScript">Salin Installer Konfigurasi</button>';
         if (!empty($installer_path)) {
             echo '<div class="alert alert-info mt-2 mb-0">';
             echo 'Jalankan manual jika auto-apply gagal: <code>bash ' . htmlspecialchars($installer_path, ENT_QUOTES, 'UTF-8') . '</code>';
@@ -533,10 +423,10 @@
     }
 
     echo '<div class="mt-4">';
-    echo '<h5>Script L2TP Client (MikroTik)</h5>';
-    echo '<textarea id="l2tpClientScript" class="form-control" rows="8" readonly>'
+    echo '<h5>Script WireGuard Client (MikroTik)</h5>';
+    echo '<textarea id="wgClientScript" class="form-control" rows="10" readonly>'
         . htmlspecialchars($client_script, ENT_QUOTES, 'UTF-8') . '</textarea>';
-    echo '<button type="button" class="btn btn-outline-primary mt-2 js-copy" data-target="l2tpClientScript">Salin Script Client</button>';
+    echo '<button type="button" class="btn btn-outline-primary mt-2 js-copy" data-target="wgClientScript">Salin Script Client</button>';
     echo '</div>';
 
     $inline_extra_js = <<<JS
@@ -557,14 +447,14 @@ document.querySelectorAll('.js-copy').forEach(function(btn){
 (function(){
     var runId = "{$current_run_id}";
     if (!runId) { return; }
-    var statusUrl = "config-l2tp.php?l2tp_status=1";
-    var shownKey = "l2tpApplyNotice_" + runId;
+    var statusUrl = "config-l2tp.php?wg_status=1";
+    var shownKey = "wgApplyNotice_" + runId;
     var pollDelayMs = 3000;
 
     function showPopup(status) {
         var message = status === "success"
-            ? "L2TP konfigurasi selesai diterapkan."
-            : "L2TP konfigurasi gagal. Cek log apply untuk detail.";
+            ? "WireGuard konfigurasi selesai diterapkan."
+            : "WireGuard konfigurasi gagal. Cek log apply untuk detail.";
         alert(message);
     }
 

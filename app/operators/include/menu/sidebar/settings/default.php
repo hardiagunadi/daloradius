@@ -12,7 +12,7 @@ if (strpos($_SERVER['PHP_SELF'], '/include/menu/sidebar/settings/default.php') !
 
 $descriptors = array();
 $descriptors[] = array( 'type' => 'link', 'label' => 'WA Gateway', 'href' => 'config-wa-gateway.php', 'icon' => 'chat-dots-fill' );
-$descriptors[] = array( 'type' => 'link', 'label' => 'VPN L2TP', 'href' => 'config-l2tp.php', 'icon' => 'shield-lock-fill' );
+$descriptors[] = array( 'type' => 'link', 'label' => 'VPN WireGuard', 'href' => 'config-l2tp.php', 'icon' => 'shield-lock-fill' );
 $descriptors[] = array( 'type' => 'link', 'label' => 'Update Database', 'href' => 'config-db-update.php', 'icon' => 'database-fill' );
 $descriptors[] = array( 'type' => 'link', 'label' => 'Ganti Password', 'href' => 'config-operator-password.php', 'icon' => 'key-fill' );
 $descriptors[] = array( 'type' => 'link', 'label' => 'Bahasa', 'href' => 'config-lang.php', 'icon' => 'translate' );
