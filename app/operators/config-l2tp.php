@@ -98,14 +98,24 @@
         $ensure_payload = array('status' => 'failed');
         $ensure_script = dirname(__DIR__, 2) . '/setup/ensure-wireguard-server-pub.sh';
         if (function_exists('exec') && is_file($ensure_script) && is_executable($ensure_script)) {
-            $ensure_cmd = "bash " . escapeshellarg($ensure_script) . " >/dev/null 2>&1";
+            $ensure_cmd = "bash " . escapeshellarg($ensure_script) . " 2>/dev/null";
             $ensure_out = array();
             $ensure_code = null;
             exec($ensure_cmd, $ensure_out, $ensure_code);
-            if ($ensure_code === 0 && is_readable($server_key_path)) {
+            $ensure_key = '';
+            foreach ($ensure_out as $line) {
+                if (strpos($line, 'OK:') === 0) {
+                    $ensure_key = trim(substr($line, 3));
+                    break;
+                }
+            }
+            if ($ensure_key === '' && is_readable($server_key_path)) {
+                $ensure_key = trim(file_get_contents($server_key_path));
+            }
+            if ($ensure_code === 0 && $ensure_key !== '') {
                 $ensure_payload = array(
                     'status' => 'success',
-                    'server_public_key' => trim(file_get_contents($server_key_path)),
+                    'server_public_key' => $ensure_key,
                 );
             }
         }
@@ -226,11 +236,17 @@
                 if ($server_public_key === '') {
                     $ensure_script = dirname(__DIR__, 2) . '/setup/ensure-wireguard-server-pub.sh';
                     if (is_file($ensure_script) && is_executable($ensure_script) && function_exists('exec')) {
-                        $ensure_cmd = "bash " . escapeshellarg($ensure_script) . " >/dev/null 2>&1";
+                        $ensure_cmd = "bash " . escapeshellarg($ensure_script) . " 2>/dev/null";
                         $ensure_out = array();
                         $ensure_code = null;
                         exec($ensure_cmd, $ensure_out, $ensure_code);
-                        if ($ensure_code === 0 && is_readable($server_key_path)) {
+                        foreach ($ensure_out as $line) {
+                            if (strpos($line, 'OK:') === 0) {
+                                $server_public_key = trim(substr($line, 3));
+                                break;
+                            }
+                        }
+                        if ($server_public_key === '' && is_readable($server_key_path)) {
                             $server_public_key = trim(file_get_contents($server_key_path));
                         }
                     }
