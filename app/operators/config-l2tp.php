@@ -185,17 +185,27 @@
                 }
                 $server_public_key = ($server_public_key !== '') ? $server_public_key : 'PASTE_SERVER_PUBLIC_KEY';
                 $server_peer_ip = ($server_wg_ip !== '') ? ($server_wg_ip . '/32') : $values['wg_server_address'];
+                $client_iface = mikrotik_escape($values['client_name']);
                 $client_lines = array(
-                    "/interface wireguard add name=\"" . mikrotik_escape($values['client_name']) . "\" listen-port=" . $values['wg_listen_port'],
-                    "/ip/address add address=" . $values['wg_client_address'] . " interface=\"" . mikrotik_escape($values['client_name']) . "\"",
-                    "/interface wireguard peers add interface=\"" . mikrotik_escape($values['client_name']) . "\" public-key=\""
+                    ":if ([:len [/interface wireguard find name=\"" . $client_iface . "\"]] = 0) do={",
+                    "  :put \"Interface " . $client_iface . " belum ada, buat dulu di MikroTik.\"",
+                    "}",
+                    ":if ([:len [/ip/address find interface=\"" . $client_iface . "\" address=\"" . $values['wg_client_address'] . "\"]] = 0) do={",
+                    "  /ip/address add address=" . $values['wg_client_address'] . " interface=\"" . $client_iface . "\"",
+                    "}",
+                    "/interface wireguard peers remove [find interface=\"" . $client_iface . "\"]",
+                    "/interface wireguard peers add interface=\"" . $client_iface . "\" public-key=\""
                         . mikrotik_escape($server_public_key) . "\" endpoint-address=" . $values['server_host']
                         . " endpoint-port=" . $values['wg_listen_port'] . " allowed-address=" . $server_peer_ip
                         . "," . $values['allowed_subnet'] . " persistent-keepalive=25s",
-                    "/ip/route add dst-address=" . $values['allowed_subnet'] . " gateway=\"" . mikrotik_escape($values['client_name']) . "\"",
-                    "/radius add service=ppp,hotspot,login address=" . $values['radius_server']
+                    ":if ([:len [/ip/route find dst-address=\"" . $values['allowed_subnet'] . "\"]] = 0) do={",
+                    "  /ip/route add dst-address=" . $values['allowed_subnet'] . " gateway=\"" . $client_iface . "\"",
+                    "}",
+                    ":if ([:len [/radius find address=\"" . $values['radius_server'] . "\" && secret=\"" . mikrotik_escape($values['radius_secret']) . "\"]] = 0) do={",
+                    "  /radius add service=ppp,hotspot,login address=" . $values['radius_server']
                         . " secret=\"" . mikrotik_escape($values['radius_secret']) . "\" authentication-port="
                         . $values['radius_auth_port'] . " accounting-port=" . $values['radius_acct_port'] . " timeout=2s",
+                    "}",
                 );
                 if ($server_public_key === 'PASTE_SERVER_PUBLIC_KEY') {
                     array_unshift($client_lines, "# Replace PASTE_SERVER_PUBLIC_KEY with VPS public key after apply.");
