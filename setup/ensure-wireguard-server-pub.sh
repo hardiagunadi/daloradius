@@ -16,17 +16,13 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-if [ ! -f "${WG_DIR}/wg0.key" ]; then
-  umask 077
-  mkdir -p "${WG_DIR}"
-  wg genkey | tee "${WG_DIR}/wg0.key" | wg pubkey > "${WG_DIR}/wg0.pub"
-else
-  wg pubkey < "${WG_DIR}/wg0.key" > "${WG_DIR}/wg0.pub"
+if [ ! -f "${WG_DIR}/wg0.pub" ]; then
+  echo "wg0.pub not found"
+  exit 1
 fi
 
 mkdir -p "$(dirname "$SERVER_PUB")"
 cp "${WG_DIR}/wg0.pub" "${SERVER_PUB}"
-chmod 600 "${WG_DIR}/wg0.key"
 chmod 644 "${WG_DIR}/wg0.pub" "${SERVER_PUB}"
 
 echo "OK: $(cat "$SERVER_PUB")"
